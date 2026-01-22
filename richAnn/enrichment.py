@@ -16,6 +16,44 @@ from .utils import (_normalize_genes, _validate_annotation, _calculate_effect_si
 logger = logging.getLogger(__name__)
 
 
+def _convert_padj_method(method: str) -> str:
+    """
+    Convert R-style method names to statsmodels format
+
+    Parameters:
+    -----------
+    method : str
+        Method name in R format (e.g., 'BH', 'BY', 'bonferroni')
+        or statsmodels format (e.g., 'fdr_bh', 'fdr_by', 'bonferroni')
+
+    Returns:
+    --------
+    str: Method name in statsmodels format
+    """
+    # Mapping from R-style to statsmodels-style
+    method_map = {
+        'BH': 'fdr_bh',
+        'BY': 'fdr_by',
+        'bonferroni': 'bonferroni',
+        'holm': 'holm',
+        'hommel': 'hommel',
+        'hochberg': 'simes-hochberg',
+        'fdr': 'fdr_bh',  # Default FDR is Benjamini-Hochberg
+    }
+
+    # If already in statsmodels format, return as-is
+    if method in ['fdr_bh', 'fdr_by', 'fdr_tsbh', 'fdr_tsbky', 'bonferroni',
+                  'sidak', 'holm-sidak', 'holm', 'simes-hochberg', 'hommel']:
+        return method
+
+    # Convert from R-style
+    if method.upper() in method_map:
+        return method_map[method.upper()]
+
+    # If not recognized, return as-is and let multipletests raise the error
+    return method
+
+
 def richGO(genes: Union[List[str], Set[str], np.ndarray], 
            godata: pd.DataFrame,
            ontology: str = "BP",
@@ -155,7 +193,10 @@ def richGO(genes: Union[List[str], Set[str], np.ndarray],
         )
 
     results_df = pd.DataFrame(results)
-    results_df['Padj'] = multipletests(results_df['Pvalue'], method=padj_method)[1]
+
+    # Convert method name to statsmodels format
+    method_converted = _convert_padj_method(padj_method)
+    results_df['Padj'] = multipletests(results_df['Pvalue'], method=method_converted)[1]
     
     if padj is not None:
         results_df = results_df[results_df['Padj'] <= padj]
@@ -278,9 +319,12 @@ def richKEGG(genes: Union[List[str], Set[str], np.ndarray],
     
     if len(results) == 0:
         raise ValueError("No enriched pathways found")
-    
+
     results_df = pd.DataFrame(results)
-    results_df['Padj'] = multipletests(results_df['Pvalue'], method=padj_method)[1]
+
+    # Convert method name to statsmodels format
+    method_converted = _convert_padj_method(padj_method)
+    results_df['Padj'] = multipletests(results_df['Pvalue'], method=method_converted)[1]
     
     if padj is not None:
         results_df = results_df[results_df['Padj'] <= padj]
@@ -306,70 +350,107 @@ def richKEGG(genes: Union[List[str], Set[str], np.ndarray],
 
 def richGSEA(gene_scores: Dict[str, float],
              geneset_db: pd.DataFrame,
-             nperm: int = 1000,
+             permutation_num: int = 1000,
              min_size: int = 15,
              max_size: int = 500,
-             weighted_score: bool = True,
-             random_state: int = 42,
-             case_sensitive: bool = False) -> EnrichResult:
+             weight: float = 1.0,
+             seed: int = 123,
+             case_sensitive: bool = False,
+             padj_method: str = "BH") -> EnrichResult:
     """
-    Perform Gene Set Enrichment Analysis (GSEA)
-    
+    Perform Gene Set Enrichment Analysis (GSEA) - matches GSEApy implementation
+
     Parameters:
     -----------
     gene_scores : dict
-        Gene IDs mapped to scores (higher = more important)
+        Gene IDs mapped to scores (higher = more important). Genes will be ranked
+        by these scores in descending order.
     geneset_db : pd.DataFrame
         Gene sets with columns: GeneSet, GeneSetName, GeneID
-    nperm : int
-        Number of permutations
+    permutation_num : int
+        Number of permutations for statistical testing (default: 1000)
     min_size : int
-        Minimum gene set size
+        Minimum gene set size (default: 15)
     max_size : int
-        Maximum gene set size
-    weighted_score : bool
-        Use weighted enrichment score
-    random_state : int
-        Random seed
+        Maximum gene set size (default: 500)
+    weight : float
+        Weighting exponent used in the enrichment score calculation (default: 1.0)
+        - weight = 0: standard Kolmogorov-Smirnov statistic
+        - weight = 1: weighted by correlation (GSEApy default)
+        - weight = 2: over-weighted by correlation
+    seed : int
+        Random seed for permutation testing (default: 123)
     case_sensitive : bool
-        Case-sensitive matching
+        Case-sensitive gene matching (default: False)
+    padj_method : str
+        Multiple testing correction method (default: "BH" for Benjamini-Hochberg)
+
+    Returns:
+    --------
+    EnrichResult object with columns:
+        - Annot: Gene set ID
+        - Term: Gene set name
+        - ES: Enrichment Score
+        - NES: Normalized Enrichment Score
+        - Pvalue: Nominal p-value
+        - Padj: Adjusted p-value (FDR)
+        - LeadingEdge: Genes in the leading edge
+        - Count: Total genes in gene set
+        - Significant: Number of leading edge genes
+
+    Notes:
+    ------
+    This implementation matches GSEApy's prerank algorithm:
+    1. Genes are ranked by input scores
+    2. Running enrichment score is calculated with weighted scoring
+    3. Statistical significance determined by permutation testing
+    4. NES computed by normalizing against permutation distribution
     """
     # Validate inputs
     _validate_annotation(geneset_db, ['GeneSet', 'GeneSetName', 'GeneID'])
-    _validate_positive_int(nperm, "nperm")
+    _validate_positive_int(permutation_num, "permutation_num")
     _validate_size_params(min_size, max_size)
 
     if not gene_scores:
         raise ValueError("gene_scores dictionary cannot be empty")
     if not all(isinstance(v, (int, float)) for v in gene_scores.values()):
         raise TypeError("All gene_scores values must be numbers")
-    
-    np.random.seed(random_state)
-    
+    if not isinstance(weight, (int, float)) or weight < 0:
+        raise ValueError(f"weight must be a non-negative number, got {weight}")
+
+    # Set random seed for reproducibility
+    np.random.seed(seed)
+
+    # Handle case sensitivity
     if not case_sensitive:
-        gene_scores = {k.upper(): v for k, v in gene_scores.items()}
+        gene_scores = {str(k).upper(): v for k, v in gene_scores.items()}
         geneset_db = geneset_db.copy()
-        geneset_db['GeneID'] = geneset_db['GeneID'].str.upper()
-    
+        geneset_db['GeneID'] = geneset_db['GeneID'].astype(str).str.upper()
+
+    # Rank genes by score (descending order - higher scores first)
     ranked_genes = sorted(gene_scores.items(), key=lambda x: x[1], reverse=True)
     ranked_gene_list = [g[0] for g in ranked_genes]
     ranked_scores = np.array([g[1] for g in ranked_genes])
-    
-    logger.info(f"GSEA: {len(ranked_gene_list)} ranked genes")
-    
+
+    logger.info(f"GSEA: {len(ranked_gene_list)} ranked genes, weight={weight}, permutations={permutation_num}")
+
+    # Group gene sets
     geneset_groups = geneset_db.groupby(['GeneSet', 'GeneSetName'])
-    
+
     results = []
     for (geneset_id, geneset_name), group in geneset_groups:
-        geneset_genes = set(group['GeneID'].unique())
-        
-        if len(geneset_genes) < min_size or len(geneset_genes) > max_size:
+        geneset_genes = set(group['GeneID'].astype(str).unique())
+        geneset_size = len(geneset_genes)
+
+        # Apply size filters
+        if geneset_size < min_size or geneset_size > max_size:
             continue
-        
+
+        # Calculate GSEA score
         es, nes, pval, leading_edge = _calculate_gsea_score(
-            ranked_gene_list, ranked_scores, geneset_genes, nperm, weighted_score
+            ranked_gene_list, ranked_scores, geneset_genes, permutation_num, weight
         )
-        
+
         results.append({
             'Annot': geneset_id,
             'Term': geneset_name,
@@ -377,135 +458,206 @@ def richGSEA(gene_scores: Dict[str, float],
             'NES': nes,
             'Pvalue': pval,
             'LeadingEdge': ';'.join(leading_edge),
-            'Count': len(geneset_genes),
+            'Count': geneset_size,
             'Significant': len(leading_edge)
         })
-    
+
     if len(results) == 0:
-        raise ValueError("No gene sets passed size filters")
-    
+        raise ValueError(
+            f"No gene sets passed size filters (min_size={min_size}, max_size={max_size}). "
+            f"Check that your gene sets contain genes present in the ranked list."
+        )
+
     results_df = pd.DataFrame(results)
-    results_df['Padj'] = multipletests(results_df['Pvalue'], method='BH')[1]
+
+    # Apply multiple testing correction
+    method_converted = _convert_padj_method(padj_method)
+    results_df['Padj'] = multipletests(results_df['Pvalue'], method=method_converted)[1]
+
+    # Sort by nominal p-value
     results_df = results_df.sort_values('Pvalue').reset_index(drop=True)
-    
+
     parameters = {
         'n_genes': len(ranked_gene_list),
-        'nperm': nperm,
+        'permutation_num': permutation_num,
         'min_size': min_size,
         'max_size': max_size,
-        'weighted_score': weighted_score,
-        'random_state': random_state
+        'weight': weight,
+        'seed': seed,
+        'padj_method': padj_method
     }
-    
+
     logger.info(f"GSEA complete: {len(results_df)} gene sets tested")
-    
+
     return EnrichResult(results_df, enrichment_type="GSEA", parameters=parameters)
 
 
-def _calculate_gsea_score(ranked_genes: List[str], 
+def _calculate_gsea_score(ranked_genes: List[str],
                           ranked_scores: np.ndarray,
-                          geneset: Set[str], 
-                          nperm: int,
-                          weighted: bool = True) -> Tuple[float, float, float, List[str]]:
+                          geneset: Set[str],
+                          permutation_num: int,
+                          weight: float = 1.0) -> Tuple[float, float, float, List[str]]:
     """
-    Calculate GSEA enrichment score with permutation testing
-    
+    Calculate GSEA enrichment score with permutation testing - matches GSEApy algorithm
+
+    This implements the weighted Kolmogorov-Smirnov-like running sum statistic
+    used in GSEA (Subramanian et al., PNAS 2005).
+
+    Parameters:
+    -----------
+    ranked_genes : list
+        Gene identifiers in ranked order (highest to lowest score)
+    ranked_scores : np.ndarray
+        Corresponding scores for ranked genes
+    geneset : set
+        Set of gene identifiers in the gene set to test
+    permutation_num : int
+        Number of permutations for p-value calculation
+    weight : float
+        Weighting exponent (default: 1.0)
+        - weight = 0: standard Kolmogorov-Smirnov
+        - weight = 1: weighted by correlation (GSEApy default)
+        - weight > 1: over-weighted
+
     Returns:
     --------
     tuple: (ES, NES, pvalue, leading_edge_genes)
+        ES: Enrichment Score (maximum deviation from zero)
+        NES: Normalized Enrichment Score (ES normalized by permutation distribution)
+        pvalue: Nominal p-value from permutation test
+        leading_edge_genes: Genes contributing to the enrichment signal
+
+    Algorithm:
+    ----------
+    1. Calculate running enrichment score:
+       - For hits (genes in set): add weighted score
+       - For misses: subtract uniform penalty
+    2. ES is the maximum deviation from zero
+    3. Leading edge: all hit genes up to the peak
+    4. Permutation: randomly shuffle hit positions
+    5. NES: normalize by mean of permutation distribution
+    6. P-value: fraction of permutations with ES >= observed (or <= for negative ES)
     """
     N = len(ranked_genes)
 
+    # Find positions of genes in the gene set
     hit_indices = np.array([i for i, g in enumerate(ranked_genes) if g in geneset])
 
     if len(hit_indices) == 0:
-        return 0, 0, 1.0, []
+        return 0.0, 0.0, 1.0, []
 
-    # Convert to set for O(1) membership checking instead of O(n) with arrays
+    N_hit = len(hit_indices)
+    N_miss = N - N_hit
+
+    # Calculate observed running enrichment score
+    running_sum = _calculate_running_sum(ranked_scores, hit_indices, N, N_hit, N_miss, weight)
+
+    # Find enrichment score (maximum deviation from zero)
+    max_es = np.max(running_sum)
+    min_es = np.min(running_sum)
+    es = max_es if abs(max_es) > abs(min_es) else min_es
+
+    # Find leading edge genes (all hits up to the peak)
+    peak_idx = np.argmax(running_sum) if es > 0 else np.argmin(running_sum)
+    leading_edge = [ranked_genes[i] for i in hit_indices if i <= peak_idx]
+
+    # Permutation test to calculate p-value and NES
+    perm_scores = np.zeros(permutation_num)
+
+    for perm_idx in range(permutation_num):
+        # Randomly shuffle hit positions
+        perm_hit_indices = np.random.choice(N, size=N_hit, replace=False)
+
+        # Calculate running sum for permutation
+        perm_running = _calculate_running_sum(
+            ranked_scores, perm_hit_indices, N, N_hit, N_miss, weight
+        )
+
+        # Get permutation ES
+        perm_max = np.max(perm_running)
+        perm_min = np.min(perm_running)
+        perm_scores[perm_idx] = perm_max if abs(perm_max) > abs(perm_min) else perm_min
+
+    # Calculate Normalized Enrichment Score (NES)
+    # Normalize by the mean of positive or negative permutation scores
+    if es >= 0:
+        pos_perms = perm_scores[perm_scores >= 0]
+        mean_pos = np.mean(pos_perms) if len(pos_perms) > 0 else 1.0
+        nes = es / mean_pos if mean_pos > 0 else es
+    else:
+        neg_perms = perm_scores[perm_scores < 0]
+        mean_neg = np.mean(np.abs(neg_perms)) if len(neg_perms) > 0 else 1.0
+        # Preserve the negative sign of ES in NES
+        nes = es / mean_neg if mean_neg > 0 else es
+
+    # Calculate nominal p-value
+    if es >= 0:
+        pval = np.sum(perm_scores >= es) / permutation_num
+    else:
+        pval = np.sum(perm_scores <= es) / permutation_num
+
+    # Bound p-value to avoid zeros (minimum is 1/permutation_num)
+    pval = max(pval, 1.0 / permutation_num)
+
+    return es, nes, pval, leading_edge
+
+
+def _calculate_running_sum(ranked_scores: np.ndarray,
+                           hit_indices: np.ndarray,
+                           N: int,
+                           N_hit: int,
+                           N_miss: int,
+                           weight: float) -> np.ndarray:
+    """
+    Calculate the running sum statistic for GSEA
+
+    Parameters:
+    -----------
+    ranked_scores : np.ndarray
+        Scores for all ranked genes
+    hit_indices : np.ndarray
+        Indices of genes in the gene set
+    N : int
+        Total number of genes
+    N_hit : int
+        Number of genes in the gene set
+    N_miss : int
+        Number of genes not in the gene set
+    weight : float
+        Weighting exponent
+
+    Returns:
+    --------
+    np.ndarray: Cumulative running sum
+    """
+    running_sum = np.zeros(N)
     hit_set = set(hit_indices)
 
-    running_sum = np.zeros(N)
-
-    if weighted:
-        abs_scores = np.abs(ranked_scores)
-        N_R = np.sum(abs_scores[hit_indices])
-        N_miss = N - len(hit_indices)
-
-        for i in range(N):
-            if i in hit_set:
-                if N_R > 0:
-                    running_sum[i] = abs_scores[i] / N_R
-                else:
-                    running_sum[i] = 1.0 / len(hit_indices)
-            else:
-                if N_miss > 0:
-                    running_sum[i] = -1.0 / N_miss
-    else:
-        N_hit = len(hit_indices)
-        N_miss = N - N_hit
-
+    if weight == 0:
+        # Unweighted (classic Kolmogorov-Smirnov)
         for i in range(N):
             if i in hit_set:
                 running_sum[i] = 1.0 / N_hit
             else:
-                running_sum[i] = -1.0 / N_miss
-    
-    running_sum = np.cumsum(running_sum)
-    
-    max_es = np.max(running_sum)
-    min_es = np.min(running_sum)
-    es = max_es if abs(max_es) > abs(min_es) else min_es
-    
-    peak_idx = np.argmax(running_sum) if es > 0 else np.argmin(running_sum)
-    leading_edge = [ranked_genes[i] for i in hit_indices if i <= peak_idx]
-    
-    # Permutation test
-    perm_scores = []
-    for _ in range(nperm):
-        perm_hit_indices = np.random.choice(N, size=len(hit_indices), replace=False)
-        perm_hit_set = set(perm_hit_indices)  # Convert to set for fast lookup
-
-        perm_running = np.zeros(N)
-
-        if weighted:
-            abs_scores = np.abs(ranked_scores)
-            N_R_perm = np.sum(abs_scores[perm_hit_indices])
-            N_miss = N - len(hit_indices)
-
-            for i in range(N):
-                if i in perm_hit_set:
-                    if N_R_perm > 0:
-                        perm_running[i] = abs_scores[i] / N_R_perm
-                    else:
-                        perm_running[i] = 1.0 / len(perm_hit_indices)
-                else:
-                    perm_running[i] = -1.0 / N_miss
-        else:
-            for i in range(N):
-                if i in perm_hit_set:
-                    perm_running[i] = 1.0 / len(perm_hit_indices)
-                else:
-                    perm_running[i] = -1.0 / N_miss
-        
-        perm_running = np.cumsum(perm_running)
-        perm_max = np.max(perm_running)
-        perm_min = np.min(perm_running)
-        perm_es = perm_max if abs(perm_max) > abs(perm_min) else perm_min
-        perm_scores.append(perm_es)
-    
-    perm_scores = np.array(perm_scores)
-    
-    # Calculate NES
-    if es >= 0:
-        pos_perms = perm_scores[perm_scores >= 0]
-        nes = es / np.mean(pos_perms) if len(pos_perms) > 0 and np.mean(pos_perms) > 0 else es
-        pval = np.sum(perm_scores >= es) / nperm
+                running_sum[i] = -1.0 / N_miss if N_miss > 0 else 0.0
     else:
-        neg_perms = perm_scores[perm_scores < 0]
-        nes = -es / np.mean(-neg_perms) if len(neg_perms) > 0 and np.mean(-neg_perms) > 0 else es
-        pval = np.sum(perm_scores <= es) / nperm
-    
-    pval = max(pval, 1.0 / nperm)
-    
-    return es, nes, pval, leading_edge
+        # Weighted by correlation scores
+        abs_scores = np.abs(ranked_scores)
+
+        # Apply weight exponent and calculate normalization factor
+        weighted_scores = np.power(abs_scores[hit_indices], weight)
+        N_R = np.sum(weighted_scores)
+
+        for i in range(N):
+            if i in hit_set:
+                if N_R > 0:
+                    running_sum[i] = np.power(abs_scores[i], weight) / N_R
+                else:
+                    # Fallback if all scores are zero
+                    running_sum[i] = 1.0 / N_hit
+            else:
+                running_sum[i] = -1.0 / N_miss if N_miss > 0 else 0.0
+
+    # Calculate cumulative sum
+    return np.cumsum(running_sum)
 

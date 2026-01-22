@@ -94,7 +94,7 @@ class EnrichResult:
     def summary(self):
         """Print comprehensive summary statistics"""
         df = self.result
-        
+
         print(f"\n{'='*70}")
         print(f"  richAnn Enrichment Result ({self.enrichment_type})")
         print(f"{'='*70}")
@@ -102,36 +102,71 @@ class EnrichResult:
         print(f"  Total terms: {len(df)}")
         print(f"  Significant (Padj < 0.05): {len(df[df['Padj'] < 0.05])}")
         print(f"  Significant (Padj < 0.01): {len(df[df['Padj'] < 0.01])}")
-        print(f"  Highly enriched (RichFactor > 2): {len(df[df['RichFactor'] > 2])}")
-        
-        print(f"\nEnrichment Statistics:")
-        print(f"  RichFactor range: {df['RichFactor'].min():.3f} - {df['RichFactor'].max():.3f}")
-        print(f"  Mean RichFactor: {df['RichFactor'].mean():.3f}")
-        print(f"  Median RichFactor: {df['RichFactor'].median():.3f}")
-        
-        print(f"\nGene Count Statistics:")
-        print(f"  Range: {df['Count'].min()} - {df['Count'].max()}")
-        print(f"  Mean: {df['Count'].mean():.1f}")
-        print(f"  Median: {df['Count'].median():.1f}")
-        
-        if 'OddsRatio' in df.columns:
-            print(f"\nOdds Ratio Statistics:")
-            print(f"  Range: {df['OddsRatio'].min():.3f} - {df['OddsRatio'].max():.3f}")
-            print(f"  Mean: {df['OddsRatio'].mean():.3f}")
-        
-        print(f"\nTop 5 Terms by RichFactor:")
-        top5 = df.nlargest(5, 'RichFactor')[['Term', 'RichFactor', 'Count', 'Padj']]
-        print(top5.to_string(index=False))
-        
-        print(f"\nTop 5 Terms by Significance:")
-        top5_sig = df.nsmallest(5, 'Padj')[['Term', 'RichFactor', 'Count', 'Padj']]
-        print(top5_sig.to_string(index=False))
-        
+
+        # GSEA-specific statistics
+        if self.enrichment_type == "GSEA":
+            if 'ES' in df.columns:
+                print(f"\nEnrichment Score Statistics:")
+                print(f"  ES range: {df['ES'].min():.3f} to {df['ES'].max():.3f}")
+                print(f"  Mean ES: {df['ES'].mean():.3f}")
+
+            if 'NES' in df.columns:
+                print(f"\nNormalized Enrichment Score Statistics:")
+                print(f"  NES range: {df['NES'].min():.3f} to {df['NES'].max():.3f}")
+                print(f"  Mean NES: {df['NES'].mean():.3f}")
+                print(f"  Highly enriched (|NES| > 2): {len(df[df['NES'].abs() > 2])}")
+
+            print(f"\nGene Set Size Statistics:")
+            print(f"  Range: {df['Count'].min()} - {df['Count'].max()}")
+            print(f"  Mean: {df['Count'].mean():.1f}")
+            print(f"  Median: {df['Count'].median():.1f}")
+
+            # Top terms by NES
+            print(f"\nTop 5 Gene Sets by |NES|:")
+            df_abs_nes = df.copy()
+            df_abs_nes['abs_NES'] = df_abs_nes['NES'].abs()
+            top5 = df_abs_nes.nlargest(5, 'abs_NES')[['Term', 'NES', 'Pvalue', 'Padj']]
+            print(top5.to_string(index=False))
+
+            print(f"\nTop 5 Gene Sets by Significance:")
+            top5_sig = df.nsmallest(5, 'Padj')[['Term', 'NES', 'Pvalue', 'Padj']]
+            print(top5_sig.to_string(index=False))
+
+        # ORA/GO/KEGG-specific statistics
+        else:
+            if 'RichFactor' in df.columns:
+                print(f"  Highly enriched (RichFactor > 2): {len(df[df['RichFactor'] > 2])}")
+
+                print(f"\nEnrichment Statistics:")
+                print(f"  RichFactor range: {df['RichFactor'].min():.3f} - {df['RichFactor'].max():.3f}")
+                print(f"  Mean RichFactor: {df['RichFactor'].mean():.3f}")
+                print(f"  Median RichFactor: {df['RichFactor'].median():.3f}")
+
+            print(f"\nGene Count Statistics:")
+            print(f"  Range: {df['Count'].min()} - {df['Count'].max()}")
+            print(f"  Mean: {df['Count'].mean():.1f}")
+            print(f"  Median: {df['Count'].median():.1f}")
+
+            if 'OddsRatio' in df.columns:
+                print(f"\nOdds Ratio Statistics:")
+                print(f"  Range: {df['OddsRatio'].min():.3f} - {df['OddsRatio'].max():.3f}")
+                print(f"  Mean: {df['OddsRatio'].mean():.3f}")
+
+            if 'RichFactor' in df.columns:
+                print(f"\nTop 5 Terms by RichFactor:")
+                top5 = df.nlargest(5, 'RichFactor')[['Term', 'RichFactor', 'Count', 'Padj']]
+                print(top5.to_string(index=False))
+
+                print(f"\nTop 5 Terms by Significance:")
+                top5_sig = df.nsmallest(5, 'Padj')[['Term', 'RichFactor', 'Count', 'Padj']]
+                print(top5_sig.to_string(index=False))
+
+        # Parameters (common for all types)
         if self.parameters:
             print(f"\nAnalysis Parameters:")
             for key, value in self.parameters.items():
                 print(f"  {key}: {value}")
-        
+
         print(f"{'='*70}\n")
     
     def to_csv(self, filename: str, **kwargs):
