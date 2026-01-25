@@ -38,7 +38,7 @@ richAnn is a comprehensive Python package for gene set enrichment analysis, prov
 ### From Source
 
 ```bash
-git clone https://github.com/yourusername/richAnn.git
+git clone https://github.com/guokai8/richAnn.git
 cd richAnn
 pip install -e .
 ```
