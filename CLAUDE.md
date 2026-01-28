@@ -79,26 +79,50 @@ flake8 richAnn/
 
 ## pathwaydb Integration
 
-richAnn can directly use annotation data from the `pathwaydb` package via converter functions:
+richAnn integrates with [pathwaydb](https://github.com/guokai8/pathwaydb) for easy access to GO and KEGG annotations. This is the **recommended approach** for production use.
+
+### Supported Species (12 total)
+- **Mammals**: human, mouse, rat, pig, cow, dog, chicken
+- **Fish**: zebrafish
+- **Invertebrates**: fly, worm
+- **Plants**: arabidopsis
+- **Fungi**: yeast
+
+### Complete Workflow
 
 ```python
 import richAnn as ra
-from pathwaydb import GOAnnotationDB, KEGGAnnotationDB
+from pathwaydb import GO, KEGG
 
-# GO annotations
-go_db = GOAnnotationDB('go_human.db')
-go_data = ra.from_pathwaydb_go(go_db, ontology="BP")
-result = ra.richGO(genes, go_data, ontology="BP")
+# Download GO annotations (run once)
+go = GO(storage_path='go_human.db')
+go.download_annotations(species='human')
 
-# KEGG annotations
-kegg_db = KEGGAnnotationDB('kegg_human.db')
-kegg_data = ra.from_pathwaydb_kegg(kegg_db)
-result = ra.richKEGG(genes, kegg_data)
+# Download KEGG annotations (run once)
+kegg = KEGG(species='hsa', storage_path='kegg_human.db')
+kegg.download_annotations()
+kegg.convert_ids_to_symbols()
+
+# Convert to richAnn format
+go_data = ra.from_pathwaydb_go(go.storage, ontology="BP")
+kegg_data = ra.from_pathwaydb_kegg(kegg.storage)
+
+# Run enrichment
+go_result = ra.richGO(genes, go_data, ontology="BP")
+kegg_result = ra.richKEGG(genes, kegg_data)
 ```
 
+### Converter Functions
+
+- `from_pathwaydb_go(go_db, ontology)` - Converts GOAnnotationDB to richAnn format
+- `from_pathwaydb_kegg(kegg_db)` - Converts KEGGAnnotationDB to richAnn format
+
 **Column mapping:**
-- GO: `TERM` → `GOterm`, `Aspect` (P/F/C) → `Ontology` (BP/MF/CC), `term_name` → `GOname`
-- KEGG: `PATH` → `Pathway`, `Annot` → `PathwayName`
+- GO: `GeneID` → `GeneID`, `TERM` → `GOterm`, `Aspect` (P/F/C) → `Ontology` (BP/MF/CC), `term_name` → `GOname`
+- KEGG: `GeneID` → `GeneID`, `PATH` → `Pathway`, `Annot` → `PathwayName`
+
+### Example Script
+See `examples/pathwaydb_integration.py` for a complete working example.
 
 ## Key Implementation Details
 

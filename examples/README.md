@@ -4,10 +4,38 @@ This directory contains example scripts demonstrating how to use richAnn for gen
 
 ## Quick Start
 
-### Realistic Example (Recommended)
+### pathwaydb Integration (Recommended for Production)
+**File:** `pathwaydb_integration.py`
+
+The **recommended approach** for real-world enrichment analysis. Uses [pathwaydb](https://github.com/guokai8/pathwaydb) to download and query GO/KEGG annotations.
+
+**Features:**
+- Downloads real GO annotations from Gene Ontology
+- Downloads real KEGG pathways from KEGG database
+- Supports 12 model species (human, mouse, rat, zebrafish, fly, worm, yeast, etc.)
+- Local SQLite storage for fast offline queries
+- Complete workflow from download to visualization
+
+```bash
+# First install pathwaydb
+pip install pathwaydb
+
+# Run the example
+python3 pathwaydb_integration.py
+```
+
+**Output files:**
+- `go_human.db` - Local GO annotation database
+- `kegg_human.db` - Local KEGG pathway database
+- `pathwaydb_go_dotplot.png` - GO enrichment dot plot
+- `pathwaydb_kegg_dotplot.png` - KEGG enrichment dot plot
+- `pathwaydb_go_results.csv` - GO enrichment results
+- `pathwaydb_kegg_results.csv` - KEGG enrichment results
+
+### Realistic Example
 **File:** `realistic_example.py`
 
-A complete working example that demonstrates:
+A complete working example with synthetic annotation data that demonstrates:
 - GO term enrichment analysis
 - KEGG pathway enrichment
 - Visualization (bar plots, dot plots)
@@ -76,7 +104,38 @@ result = ra.richGSEA(gene_scores_dict, geneset_db)
 
 ## Loading Real Annotation Data
 
-richAnn provides utilities to load standard annotation formats:
+### Option 1: Using pathwaydb (Recommended)
+
+The easiest way to get real annotation data:
+
+```python
+import richAnn as ra
+from pathwaydb import GO, KEGG
+
+# Download GO annotations (run once, data is cached)
+go = GO(storage_path='go_human.db')
+go.download_annotations(species='human')
+
+# Convert to richAnn format
+go_data = ra.from_pathwaydb_go(go.storage, ontology="BP")
+
+# Download KEGG annotations
+kegg = KEGG(species='hsa', storage_path='kegg_human.db')
+kegg.download_annotations()
+kegg.convert_ids_to_symbols()
+
+# Convert to richAnn format
+kegg_data = ra.from_pathwaydb_kegg(kegg.storage)
+
+# Run analysis
+result = ra.richGO(genes, go_data, ontology="BP")
+```
+
+**Supported species:** human, mouse, rat, zebrafish, fly, worm, yeast, arabidopsis, pig, cow, dog, chicken
+
+### Option 2: Using Standard File Formats
+
+richAnn also supports loading annotation data from standard file formats:
 
 ```python
 import richAnn as ra
