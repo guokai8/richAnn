@@ -371,7 +371,12 @@ def from_pathwaydb_kegg(kegg_db) -> pd.DataFrame:
 
     Returns:
     --------
-    pd.DataFrame with columns: GeneID, Pathway, PathwayName
+    pd.DataFrame with columns: GeneID, Pathway, PathwayName, Level1, Level2, Level3
+
+    The Level columns contain KEGG pathway hierarchy information:
+    - Level1: Top-level category (e.g., "Metabolism", "Human Diseases")
+    - Level2: Sub-category (e.g., "Carbohydrate metabolism", "Cancer")
+    - Level3: Pathway name (same as PathwayName)
 
     Examples:
     ---------
@@ -379,6 +384,7 @@ def from_pathwaydb_kegg(kegg_db) -> pd.DataFrame:
     >>> kegg_db = KEGGAnnotationDB('kegg_human.db')
     >>> kegg_data = from_pathwaydb_kegg(kegg_db)
     >>> result = richKEGG(genes, kegg_data)
+    >>> # Results will include Level1, Level2, Level3 columns
     """
     # Handle both KEGGAnnotationDB instance and DataFrame
     if hasattr(kegg_db, 'to_dataframe'):
@@ -401,14 +407,29 @@ def from_pathwaydb_kegg(kegg_db) -> pd.DataFrame:
     if missing:
         raise ValueError(f"Missing required columns: {missing}. Expected pathwaydb KEGG format.")
 
+    # Check if hierarchy columns exist
+    has_hierarchy = all(col in df.columns for col in ['Level1', 'Level2', 'Level3'])
+
+    # Select columns to include
+    cols_to_include = ['GeneID', 'PATH', 'Annot']
+    if has_hierarchy:
+        cols_to_include.extend(['Level1', 'Level2', 'Level3'])
+
+    result = df[cols_to_include].copy()
+
     # Rename columns to richAnn format
-    result = df[['GeneID', 'PATH', 'Annot']].copy()
-    result.columns = ['GeneID', 'Pathway', 'PathwayName']
+    rename_map = {'PATH': 'Pathway', 'Annot': 'PathwayName'}
+    result = result.rename(columns=rename_map)
 
     # Remove duplicates
     result = result.drop_duplicates()
 
-    logger.info(f"Converted {result['Pathway'].nunique()} KEGG pathways for {result['GeneID'].nunique()} genes")
+    # Log info about hierarchy
+    if has_hierarchy:
+        n_with_hierarchy = result['Level1'].notna().sum()
+        logger.info(f"Converted {result['Pathway'].nunique()} KEGG pathways for {result['GeneID'].nunique()} genes ({n_with_hierarchy} with hierarchy)")
+    else:
+        logger.info(f"Converted {result['Pathway'].nunique()} KEGG pathways for {result['GeneID'].nunique()} genes (no hierarchy)")
 
     return result
 

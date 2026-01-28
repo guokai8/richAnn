@@ -301,9 +301,9 @@ fig = ra.ggdot(result, top=15)
 import richAnn as ra
 from pathwaydb import KEGG
 
-# Step 1: Download KEGG annotations
+# Step 1: Download KEGG annotations (includes pathway hierarchy!)
 kegg = KEGG(species='hsa', storage_path='kegg_human.db')
-kegg.download_annotations()
+kegg.download_annotations()  # Automatically downloads pathway hierarchy
 kegg.convert_ids_to_symbols()  # Convert Entrez IDs to gene symbols
 
 # Step 2: Convert to richAnn format
@@ -313,10 +313,21 @@ print(f"Loaded {kegg_data['Pathway'].nunique()} pathways")
 # Step 3: Run enrichment analysis
 result = ra.richKEGG(genes, kegg_data, pvalue=0.05)
 
-# Step 4: Visualize
+# Step 4: Results now include pathway hierarchy!
+print(result.result[['Annot', 'Term', 'Level1', 'Level2', 'Padj']].head())
+#         Annot                    Term           Level1                  Level2      Padj
+# 0   hsa03440  Homologous recombination  Genetic Info...  Replication and repair  0.0001
+# 1   hsa04110              Cell cycle    Cellular Processes        Cell growth...  0.0005
+
+# Step 5: Visualize
 fig = ra.ggbar(result, top=10)
 fig = ra.ggnetwork(result, top=20)
 ```
+
+**KEGG Pathway Hierarchy Levels:**
+- **Level1**: Top-level category (e.g., "Metabolism", "Human Diseases", "Cellular Processes")
+- **Level2**: Sub-category (e.g., "Carbohydrate metabolism", "Cancer", "Cell growth and death")
+- **Level3**: Pathway name (same as PathwayName)
 
 ### Complete Workflow Example
 
@@ -485,6 +496,9 @@ experimental = go.storage.filter(evidence_codes=['EXP', 'IDA', 'IPI', 'IMP', 'IG
 | `GeneID` | `GeneID` | Gene symbol |
 | `PATH` | `Pathway` | Pathway ID (hsa04110) |
 | `Annot` | `PathwayName` | Pathway name |
+| `Level1` | `Level1` | Top-level category (e.g., "Metabolism") |
+| `Level2` | `Level2` | Sub-category (e.g., "Carbohydrate metabolism") |
+| `Level3` | `Level3` | Pathway name (same as PathwayName) |
 
 ## Working with EnrichResult Objects
 
