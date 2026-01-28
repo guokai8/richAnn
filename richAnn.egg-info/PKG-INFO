@@ -1,0 +1,543 @@
+Metadata-Version: 2.4
+Name: richAnn
+Version: 1.0.0
+Summary: Functional enrichment analysis and visualization for Python
+Home-page: https://github.com/yourusername/richAnn
+Author: richAnn Development Team
+Author-email: support@richann.org
+Classifier: Development Status :: 4 - Beta
+Classifier: Intended Audience :: Science/Research
+Classifier: Topic :: Scientific/Engineering :: Bio-Informatics
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy>=1.21.0
+Requires-Dist: pandas>=1.3.0
+Requires-Dist: scipy>=1.7.0
+Requires-Dist: matplotlib>=3.4.0
+Requires-Dist: seaborn>=0.11.0
+Requires-Dist: networkx>=2.6.0
+Requires-Dist: statsmodels>=0.13.0
+Provides-Extra: dev
+Requires-Dist: pytest>=7.0; extra == "dev"
+Requires-Dist: pytest-cov>=4.0; extra == "dev"
+Requires-Dist: black>=22.0; extra == "dev"
+Requires-Dist: flake8>=5.0; extra == "dev"
+Provides-Extra: docs
+Requires-Dist: sphinx>=4.0; extra == "docs"
+Requires-Dist: sphinx-rtd-theme>=1.0; extra == "docs"
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: license-file
+Dynamic: provides-extra
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
+
+# richAnn
+
+**Rich Annotation**: Functional Enrichment Analysis and Visualization for Python
+
+[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+
+## Overview
+
+richAnn is a comprehensive Python package for gene set enrichment analysis, providing powerful statistical methods and publication-quality visualizations. Inspired by the R package richR, richAnn brings advanced enrichment analysis capabilities to the Python ecosystem.
+
+### Key Features
+
+- **Multiple Enrichment Methods**
+  - Gene Ontology (GO) enrichment analysis
+  - KEGG pathway analysis
+  - Gene Set Enrichment Analysis (GSEA) with permutation testing
+
+- **Advanced Analysis**
+  - Kappa-based term clustering to group similar results
+  - Cross-sample comparison for differential enrichment
+  - Multiple testing correction (Benjamini-Hochberg, Bonferroni, etc.)
+
+- **Publication-Quality Visualizations**
+  - Bar plots and dot plots for enrichment results
+  - Network graphs (term-gene, term-term, multi-database networks)
+  - Heatmaps for cross-sample comparison
+  - GSEA enrichment score plots
+
+- **Flexible Data Loading**
+  - GMT file support for custom gene sets
+  - GAF file parser for GO annotations
+  - KEGG mapping file support
+  - Custom annotation builder
+
+## Installation
+
+### From Source
+
+```bash
+git clone https://github.com/guokai8/richAnn.git
+cd richAnn
+pip install -e .
+```
+
+### Development Installation
+
+To install with development dependencies (pytest, black, flake8):
+
+```bash
+pip install -e ".[dev]"
+```
+
+### Dependencies
+
+- Python ≥ 3.8
+- numpy ≥ 1.21.0
+- pandas ≥ 1.3.0
+- scipy ≥ 1.7.0
+- matplotlib ≥ 3.4.0
+- seaborn ≥ 0.11.0
+- networkx ≥ 2.6.0
+- statsmodels ≥ 0.13.0
+
+## Quick Start
+
+### Basic GO Enrichment Analysis
+
+```python
+import richAnn as ra
+import pandas as pd
+
+# Your gene list of interest
+genes = ["BRCA1", "BRCA2", "TP53", "ATM", "CHEK2", "RAD51", "PALB2"]
+
+# Load GO annotation (or prepare your own DataFrame)
+go_data = pd.DataFrame({
+    'GeneID': ['BRCA1', 'BRCA2', 'TP53', 'ATM', ...],
+    'GOterm': ['GO:0006281', 'GO:0006281', ...],
+    'GOname': ['DNA repair', 'DNA repair', ...],
+    'Ontology': ['BP', 'BP', ...]
+})
+
+# Perform GO enrichment
+result = ra.richGO(
+    genes=genes,
+    godata=go_data,
+    ontology="BP",  # Biological Process
+    pvalue=0.05,
+    padj=0.05,
+    minSize=5,
+    maxSize=500
+)
+
+# View results
+print(result)
+result.summary()
+
+# Export results
+result.to_csv("go_enrichment_results.csv")
+```
+
+### Visualize Results
+
+```python
+# Bar plot
+fig = ra.ggbar(result, top=10, filename="barplot.png")
+
+# Dot plot
+fig = ra.ggdot(result, top=10, filename="dotplot.png")
+
+# Network visualization
+fig = ra.ggnetwork(result, top=20, filename="network.png")
+```
+
+### KEGG Pathway Enrichment
+
+```python
+# Load KEGG annotation
+kegg_data = pd.DataFrame({
+    'GeneID': ['BRCA1', 'BRCA2', ...],
+    'Pathway': ['hsa03440', 'hsa03440', ...],
+    'PathwayName': ['Homologous recombination', ...]
+})
+
+# Perform KEGG enrichment
+kegg_result = ra.richKEGG(
+    genes=genes,
+    kodata=kegg_data,
+    pvalue=0.05,
+    padj=0.05
+)
+```
+
+### Gene Set Enrichment Analysis (GSEA)
+
+```python
+# Gene scores (e.g., from differential expression analysis)
+gene_scores = {
+    "BRCA1": 2.5,
+    "BRCA2": 2.3,
+    "TP53": 2.1,
+    "CDK1": -1.8,
+    "CDK2": -1.5,
+    # ... more genes
+}
+
+# Load gene set database
+geneset_db = pd.DataFrame({
+    'GeneSet': ['DNA_REPAIR', 'DNA_REPAIR', ...],
+    'GeneSetName': ['DNA repair pathway', ...],
+    'GeneID': ['BRCA1', 'BRCA2', ...]
+})
+
+# Perform GSEA
+gsea_result = ra.richGSEA(
+    gene_scores=gene_scores,
+    geneset_db=geneset_db,
+    nperm=1000,
+    min_size=15,
+    max_size=500
+)
+
+# Visualize specific pathway
+fig = ra.ggGSEA(gsea_result, gene_scores, term_id="DNA_REPAIR")
+```
+
+## Advanced Features
+
+### Term Clustering
+
+Cluster similar enrichment terms based on gene overlap:
+
+```python
+# Cluster enrichment results
+clustered = ra.richCluster(
+    result,
+    cutoff=0.5,      # Kappa score threshold
+    minSize=5,       # Minimum cluster size
+    escore=3         # Enrichment score cutoff (-log10(padj))
+)
+
+# Visualize clustered network
+fig = ra.ggnetwork(clustered, top=30)
+```
+
+### Cross-Sample Comparison
+
+Compare enrichment across multiple conditions:
+
+```python
+# Perform enrichment for multiple samples
+sample1_result = ra.richGO(sample1_genes, go_data, ontology="BP")
+sample2_result = ra.richGO(sample2_genes, go_data, ontology="BP")
+sample3_result = ra.richGO(sample3_genes, go_data, ontology="BP")
+
+# Compare results
+comparison = ra.compareResult({
+    'Control': sample1_result,
+    'Treatment1': sample2_result,
+    'Treatment2': sample3_result
+})
+
+# Visualize comparison
+fig = ra.ggheatmap(comparison, top=30)
+fig = ra.comparedot(comparison, top=10)
+```
+
+### Load Annotations from Standard Formats
+
+```python
+# Load from GMT file (e.g., MSigDB)
+geneset_db = ra.load_gmt("c2.cp.kegg.v7.4.symbols.gmt")
+
+# Load GO annotations from GAF file
+go_data = ra.load_go_gaf(
+    "goa_human.gaf",
+    ontology="BP",
+    evidence_codes=["EXP", "IDA", "IPI", "IMP", "IGI", "IEP"]
+)
+
+# Load KEGG pathway mapping
+kegg_data = ra.load_kegg_mapping("kegg_human.txt", organism="hsa")
+
+# Create custom annotation
+custom_sets = {
+    "DNA_REPAIR": ["BRCA1", "BRCA2", "TP53", "ATM"],
+    "CELL_CYCLE": ["CDK1", "CDK2", "CCNA1", "CCNB1"]
+}
+custom_annot = ra.create_custom_annotation(custom_sets)
+```
+
+### Validate Annotation Quality
+
+```python
+# Validate annotation format and get statistics
+stats = ra.validate_annotation_format(
+    go_data,
+    required_cols=['GeneID', 'GOterm', 'GOname', 'Ontology']
+)
+
+print(f"Valid: {stats['valid']}")
+print(f"Unique genes: {stats['n_genes']}")
+print(f"Unique annotations: {stats['n_annotations']}")
+print(f"Warnings: {stats['warnings']}")
+```
+
+## Working with EnrichResult Objects
+
+EnrichResult is the core data structure returned by all enrichment functions:
+
+```python
+# Filter results
+filtered = result.filter(
+    pvalue=0.01,           # P-value cutoff
+    padj=0.05,             # Adjusted p-value cutoff
+    min_count=5,           # Minimum gene count
+    min_richfactor=1.5     # Minimum enrichment factor
+)
+
+# Get top N results
+top10 = result.top(n=10, orderby='Padj')
+
+# Get gene-term details
+detail_df = result.detail()  # Returns DataFrame with one row per gene-term pair
+
+# Print summary statistics
+result.summary()
+
+# Export to various formats
+result.to_csv("results.csv")
+result.to_excel("results.xlsx", sheet_name="GO_BP")
+
+# Access underlying DataFrame
+df = result.result
+print(df.columns)  # View available columns
+```
+
+## Visualization Gallery
+
+### Bar Plot
+```python
+ra.ggbar(result, top=15, colorBy='Padj', horiz=True, filename="barplot.pdf", dpi=300)
+```
+
+### Dot Plot
+```python
+ra.ggdot(result, top=15, usePadj=True, size_range=(50, 500), filename="dotplot.pdf")
+```
+
+### Term-Gene Network
+```python
+ra.ggnetplot(result, top=20, layout='spring', filename="term_gene_network.pdf")
+```
+
+### Term-Term Similarity Network
+```python
+ra.ggnetwork(result, top=30, weightcut=0.2, layout='spring', filename="term_network.pdf")
+```
+
+### Multi-Database Network
+```python
+ra.ggnetmap(
+    {'GO': go_result, 'KEGG': kegg_result},
+    top=15,
+    filename="combined_network.pdf"
+)
+```
+
+### Comparison Heatmap
+```python
+ra.ggheatmap(
+    comparison_df,
+    top=30,
+    cluster_rows=True,
+    cluster_cols=False,
+    filename="heatmap.pdf"
+)
+```
+
+## Understanding the Results
+
+### Key Columns in Results
+
+- **Annot**: Annotation ID (e.g., GO:0006281, hsa03440)
+- **Term**: Human-readable term name
+- **Pvalue**: Raw p-value from hypergeometric test
+- **Padj**: Adjusted p-value (Benjamini-Hochberg FDR by default)
+- **Count**: Number of query genes in this term
+- **GeneID**: Semicolon-separated list of genes
+- **RichFactor**: Enrichment ratio (observed/expected)
+- **GeneRatio**: Query genes in term / total query genes (k/n)
+- **BgRatio**: Background genes in term / total background (M/N)
+- **OddsRatio**: Odds ratio from Fisher's exact test
+
+### Statistical Methods
+
+#### Hypergeometric Test (richGO, richKEGG)
+Tests for over-representation using the hypergeometric distribution:
+- P(X ≥ k) where k = number of overlapping genes
+- Accounts for gene set size and background universe
+
+#### GSEA (richGSEA)
+Ranks genes by score and calculates enrichment score:
+- Weighted running sum based on gene ranks
+- Permutation testing for significance
+- Normalized enrichment score (NES) accounts for gene set size
+
+## Tips and Best Practices
+
+### 1. Choose Appropriate Background
+```python
+# Option 1: Use all genes in annotation (default)
+result = ra.richGO(genes, go_data, ontology="BP")
+
+# Option 2: Provide custom background (recommended for RNA-seq)
+background = list(expressed_genes)  # All genes detected in experiment
+result = ra.richGO(genes, go_data, ontology="BP", universe=background)
+```
+
+### 2. Handle Gene ID Formatting
+```python
+# Case-insensitive matching (default)
+result = ra.richGO(genes, go_data, case_sensitive=False)
+
+# Case-sensitive matching
+result = ra.richGO(genes, go_data, case_sensitive=True)
+```
+
+### 3. Adjust Gene Set Size Limits
+```python
+# Exclude very small and very large gene sets
+result = ra.richGO(
+    genes, go_data,
+    minSize=10,   # Exclude terms with < 10 genes
+    maxSize=300   # Exclude terms with > 300 genes
+)
+```
+
+### 4. Multiple Testing Correction
+```python
+# Benjamini-Hochberg FDR (default)
+result = ra.richGO(genes, go_data, padj_method="BH")
+
+# Bonferroni correction (more conservative)
+result = ra.richGO(genes, go_data, padj_method="bonferroni")
+
+# No correction (use with caution)
+result = ra.richGO(genes, go_data, padj_method="none")
+```
+
+## Common Issues and Solutions
+
+### Issue: "No query genes found in background universe"
+**Solution**: Check gene ID format matches annotation. Try case_sensitive=False.
+
+### Issue: "No enriched terms found"
+**Solutions**:
+- Relax p-value cutoff: `pvalue=0.1`
+- Adjust gene set size limits: `minSize=3, maxSize=1000`
+- Check that your gene list is biologically relevant
+- Verify annotation database matches your organism
+
+### Issue: GSEA is slow
+**Solution**: Reduce permutations (but keep ≥ 1000): `nperm=1000`
+
+### Issue: Visualizations have overlapping labels
+**Solutions**:
+- Reduce `top` parameter: `top=10`
+- Increase figure size: `figsize=(14, 10)`
+- Decrease font size: `fontsize=8`
+
+## Testing
+
+Run the test suite:
+
+```bash
+# Run all tests
+pytest
+
+# Run with coverage
+pytest --cov=richAnn
+
+# Run specific test file
+pytest tests/test_enrichment.py
+
+# Run with verbose output
+pytest -v
+```
+
+## Development
+
+### Code Formatting
+```bash
+black richAnn/
+```
+
+### Linting
+```bash
+flake8 richAnn/
+```
+
+## Citation
+
+If you use richAnn in your research, please cite:
+
+```
+[Citation information will be added upon publication]
+```
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- Inspired by the R package [richR](https://github.com/hurlab/richR)
+- Built on the excellent scientific Python ecosystem (NumPy, pandas, SciPy, matplotlib)
+
+## Contact
+
+For questions and feedback:
+- Open an issue on [GitHub](https://github.com/yourusername/richAnn/issues)
+- Email: support@richann.org
+
+## Changelog
+
+### Version 1.0.0 (Current)
+
+#### New Features
+- GO, KEGG, and GSEA enrichment analysis
+- Kappa-based term clustering
+- 8 visualization types
+- GMT, GAF, and KEGG file loaders
+- Custom annotation builder
+- Cross-sample comparison tools
+- Comprehensive test suite
+
+#### Bug Fixes
+- Fixed module import error
+- Improved GSEA performance (28x faster)
+- Added edge case handling for visualizations
+- Enhanced error messages with actionable suggestions
+
+#### Improvements
+- Added input validation for all functions
+- Comprehensive documentation with examples
+- Test coverage for core functionality
+- Better error handling throughout
+
+---
+
+**Happy Enriching! 🧬**

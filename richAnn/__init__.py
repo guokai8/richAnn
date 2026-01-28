@@ -15,7 +15,8 @@ from .vis import (
 )
 from .data import (
     load_gmt, load_go_gaf, load_kegg_mapping,
-    create_custom_annotation, validate_annotation_format
+    create_custom_annotation, validate_annotation_format,
+    from_pathwaydb_go, from_pathwaydb_kegg
 )
 
 __version__ = "1.0.0"
@@ -47,4 +48,7 @@ __all__ = [
     'load_kegg_mapping',
     'create_custom_annotation',
     'validate_annotation_format',
+    # pathwaydb integration
+    'from_pathwaydb_go',
+    'from_pathwaydb_kegg',
 ]

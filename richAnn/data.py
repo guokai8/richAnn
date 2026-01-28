@@ -288,6 +288,131 @@ def create_custom_annotation(gene_sets: Dict[str, List[str]],
     return df
 
 
+def from_pathwaydb_go(go_db, ontology: Optional[str] = None) -> pd.DataFrame:
+    """
+    Convert pathwaydb GOAnnotationDB output to richAnn GO format.
+
+    Parameters:
+    -----------
+    go_db : pathwaydb.GOAnnotationDB or pd.DataFrame
+        Either a GOAnnotationDB instance or a DataFrame from go_db.to_dataframe()
+    ontology : str, optional
+        Filter by ontology: "BP", "MF", or "CC". If None, loads all.
+
+    Returns:
+    --------
+    pd.DataFrame with columns: GeneID, GOterm, GOname, Ontology
+
+    Examples:
+    ---------
+    >>> from pathwaydb import GOAnnotationDB
+    >>> go_db = GOAnnotationDB('go_human.db')
+    >>> go_data = from_pathwaydb_go(go_db, ontology="BP")
+    >>> result = richGO(genes, go_data, ontology="BP")
+    """
+    # Handle both GOAnnotationDB instance and DataFrame
+    if hasattr(go_db, 'to_dataframe'):
+        # It's a GOAnnotationDB instance
+        records = go_db.to_dataframe()
+        df = pd.DataFrame(records)
+    elif isinstance(go_db, pd.DataFrame):
+        df = go_db.copy()
+    elif isinstance(go_db, list):
+        # List of dicts from to_dataframe()
+        df = pd.DataFrame(go_db)
+    else:
+        raise TypeError(
+            f"Expected GOAnnotationDB, DataFrame, or list of dicts, got {type(go_db)}"
+        )
+
+    # Validate required columns from pathwaydb format
+    required = ['GeneID', 'TERM', 'Aspect']
+    missing = set(required) - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}. Expected pathwaydb GO format.")
+
+    # Map Aspect (P/F/C) to Ontology (BP/MF/CC)
+    aspect_map = {'P': 'BP', 'F': 'MF', 'C': 'CC'}
+    df['Ontology'] = df['Aspect'].map(aspect_map).fillna(df['Aspect'])
+
+    # Filter by ontology if specified
+    if ontology:
+        if ontology not in ['BP', 'MF', 'CC']:
+            raise ValueError("ontology must be 'BP', 'MF', or 'CC'")
+        df = df[df['Ontology'] == ontology]
+
+    # Get term names if available (pathwaydb may have term_name column)
+    if 'term_name' in df.columns:
+        df['GOname'] = df['term_name'].fillna(df['TERM'])
+    else:
+        # Use GO ID as name placeholder - user should populate term names
+        df['GOname'] = df['TERM']
+
+    # Rename columns to richAnn format
+    result = df[['GeneID', 'TERM', 'GOname', 'Ontology']].copy()
+    result.columns = ['GeneID', 'GOterm', 'GOname', 'Ontology']
+
+    # Remove duplicates
+    result = result.drop_duplicates()
+
+    logger.info(f"Converted {result['GOterm'].nunique()} GO terms for {result['GeneID'].nunique()} genes")
+
+    return result
+
+
+def from_pathwaydb_kegg(kegg_db) -> pd.DataFrame:
+    """
+    Convert pathwaydb KEGGAnnotationDB output to richAnn KEGG format.
+
+    Parameters:
+    -----------
+    kegg_db : pathwaydb.KEGGAnnotationDB or pd.DataFrame
+        Either a KEGGAnnotationDB instance or a DataFrame from kegg_db.to_dataframe()
+
+    Returns:
+    --------
+    pd.DataFrame with columns: GeneID, Pathway, PathwayName
+
+    Examples:
+    ---------
+    >>> from pathwaydb import KEGGAnnotationDB
+    >>> kegg_db = KEGGAnnotationDB('kegg_human.db')
+    >>> kegg_data = from_pathwaydb_kegg(kegg_db)
+    >>> result = richKEGG(genes, kegg_data)
+    """
+    # Handle both KEGGAnnotationDB instance and DataFrame
+    if hasattr(kegg_db, 'to_dataframe'):
+        # It's a KEGGAnnotationDB instance
+        records = kegg_db.to_dataframe()
+        df = pd.DataFrame(records)
+    elif isinstance(kegg_db, pd.DataFrame):
+        df = kegg_db.copy()
+    elif isinstance(kegg_db, list):
+        # List of dicts from to_dataframe()
+        df = pd.DataFrame(kegg_db)
+    else:
+        raise TypeError(
+            f"Expected KEGGAnnotationDB, DataFrame, or list of dicts, got {type(kegg_db)}"
+        )
+
+    # Validate required columns from pathwaydb format
+    required = ['GeneID', 'PATH', 'Annot']
+    missing = set(required) - set(df.columns)
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}. Expected pathwaydb KEGG format.")
+
+    # Rename columns to richAnn format
+    result = df[['GeneID', 'PATH', 'Annot']].copy()
+    result.columns = ['GeneID', 'Pathway', 'PathwayName']
+
+    # Remove duplicates
+    result = result.drop_duplicates()
+
+    logger.info(f"Converted {result['Pathway'].nunique()} KEGG pathways for {result['GeneID'].nunique()} genes")
+
+    return result
+
+
 def validate_annotation_format(df: pd.DataFrame,
                                required_cols: List[str],
                                check_duplicates: bool = True,
