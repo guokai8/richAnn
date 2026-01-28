@@ -291,6 +291,261 @@ print(f"Unique annotations: {stats['n_annotations']}")
 print(f"Warnings: {stats['warnings']}")
 ```
 
+## Integration with pathwaydb
+
+richAnn integrates seamlessly with [pathwaydb](https://github.com/guokai8/pathwaydb), a lightweight Python library for downloading and querying biological pathway annotations. This is the **recommended approach** for production use.
+
+### Why Use pathwaydb?
+
+- **Easy setup**: Download annotations with one command
+- **Offline access**: Query locally without internet
+- **Always up-to-date**: Fresh data from official sources (GO, KEGG)
+- **12 model species**: Human, mouse, rat, zebrafish, fly, worm, yeast, and more
+- **Fast queries**: Millisecond lookups on SQLite databases
+
+### Installation
+
+```bash
+# Install pathwaydb
+pip install pathwaydb
+
+# Or install from source
+git clone https://github.com/guokai8/pathwaydb.git
+cd pathwaydb && pip install -e .
+```
+
+### Quick Start with pathwaydb
+
+#### GO Enrichment Analysis
+
+```python
+import richAnn as ra
+from pathwaydb import GO
+
+# Step 1: Download GO annotations (only needed once)
+go = GO(storage_path='go_human.db')
+go.download_annotations(species='human')
+# Output: Downloaded 500,000+ annotations with term names
+
+# Step 2: Convert to richAnn format
+go_data = ra.from_pathwaydb_go(go.storage, ontology="BP")
+print(f"Loaded {go_data['GOterm'].nunique()} GO terms for {go_data['GeneID'].nunique()} genes")
+
+# Step 3: Run enrichment analysis
+genes = ["BRCA1", "BRCA2", "TP53", "ATM", "CHEK2", "RAD51", "PALB2", "NBN"]
+result = ra.richGO(genes, go_data, ontology="BP", pvalue=0.05, padj=0.1)
+
+# Step 4: View and visualize results
+print(result)
+result.summary()
+fig = ra.ggdot(result, top=15)
+```
+
+#### KEGG Pathway Enrichment
+
+```python
+import richAnn as ra
+from pathwaydb import KEGG
+
+# Step 1: Download KEGG annotations (includes pathway hierarchy!)
+kegg = KEGG(species='hsa', storage_path='kegg_human.db')
+kegg.download_annotations()  # Automatically downloads pathway hierarchy
+kegg.convert_ids_to_symbols()  # Convert Entrez IDs to gene symbols
+
+# Step 2: Convert to richAnn format
+kegg_data = ra.from_pathwaydb_kegg(kegg.storage)
+print(f"Loaded {kegg_data['Pathway'].nunique()} pathways")
+
+# Step 3: Run enrichment analysis
+result = ra.richKEGG(genes, kegg_data, pvalue=0.05)
+
+# Step 4: Results now include pathway hierarchy!
+print(result.result[['Annot', 'Term', 'Level1', 'Level2', 'Padj']].head())
+#         Annot                    Term           Level1                  Level2      Padj
+# 0   hsa03440  Homologous recombination  Genetic Info...  Replication and repair  0.0001
+# 1   hsa04110              Cell cycle    Cellular Processes        Cell growth...  0.0005
+
+# Step 5: Visualize
+fig = ra.ggbar(result, top=10)
+fig = ra.ggnetwork(result, top=20)
+```
+
+**KEGG Pathway Hierarchy Levels:**
+- **Level1**: Top-level category (e.g., "Metabolism", "Human Diseases", "Cellular Processes")
+- **Level2**: Sub-category (e.g., "Carbohydrate metabolism", "Cancer", "Cell growth and death")
+- **Level3**: Pathway name (same as PathwayName)
+
+### Complete Workflow Example
+
+```python
+import richAnn as ra
+from pathwaydb import GO, KEGG
+
+# =============================================================================
+# Setup: Download annotations (run once, data is cached locally)
+# =============================================================================
+
+# GO annotations
+go = GO(storage_path='go_human.db')
+go.download_annotations(species='human')
+
+# KEGG annotations
+kegg = KEGG(species='hsa', storage_path='kegg_human.db')
+kegg.download_annotations()
+kegg.convert_ids_to_symbols()
+
+# =============================================================================
+# Analysis: Your gene list (e.g., from differential expression)
+# =============================================================================
+
+# Example: DNA damage response genes
+my_genes = [
+    "TP53", "BRCA1", "BRCA2", "ATM", "ATR", "CHEK1", "CHEK2",
+    "RAD51", "PALB2", "NBN", "MRE11", "RAD50", "XRCC1", "PARP1"
+]
+
+# =============================================================================
+# GO Enrichment (Biological Process)
+# =============================================================================
+
+go_data = ra.from_pathwaydb_go(go.storage, ontology="BP")
+go_result = ra.richGO(
+    genes=my_genes,
+    godata=go_data,
+    ontology="BP",
+    pvalue=0.05,
+    padj=0.1,
+    minSize=5,
+    maxSize=500
+)
+
+print("=== GO Enrichment Results ===")
+go_result.summary()
+
+# Top enriched terms
+print("\nTop 10 GO Terms:")
+for _, row in go_result.top(10).result.iterrows():
+    print(f"  {row['Annot']}: {row['Term']} (Padj={row['Padj']:.2e})")
+
+# =============================================================================
+# KEGG Enrichment
+# =============================================================================
+
+kegg_data = ra.from_pathwaydb_kegg(kegg.storage)
+kegg_result = ra.richKEGG(
+    genes=my_genes,
+    kodata=kegg_data,
+    pvalue=0.05,
+    padj=0.1
+)
+
+print("\n=== KEGG Enrichment Results ===")
+kegg_result.summary()
+
+# =============================================================================
+# Visualizations
+# =============================================================================
+
+# GO dot plot
+fig_go = ra.ggdot(go_result, top=15, usePadj=True)
+fig_go.savefig("go_dotplot.png", dpi=300, bbox_inches='tight')
+
+# KEGG bar plot
+fig_kegg = ra.ggbar(kegg_result, top=10, colorBy='Padj')
+fig_kegg.savefig("kegg_barplot.png", dpi=300, bbox_inches='tight')
+
+# Combined network
+fig_net = ra.ggnetmap(
+    {'GO': go_result, 'KEGG': kegg_result},
+    top=10
+)
+fig_net.savefig("combined_network.png", dpi=300, bbox_inches='tight')
+
+# =============================================================================
+# Export Results
+# =============================================================================
+
+go_result.to_csv("go_enrichment_results.csv")
+kegg_result.to_csv("kegg_enrichment_results.csv")
+```
+
+### Multi-Species Analysis
+
+pathwaydb supports 12 model organisms. Use the same workflow for any species:
+
+```python
+from pathwaydb import GO, get_supported_species
+
+# List all supported species
+print(get_supported_species())
+# ['arabidopsis', 'chicken', 'cow', 'dog', 'fly', 'human', 'mouse', 'pig', 'rat', 'worm', 'yeast', 'zebrafish']
+
+# Mouse analysis
+go_mouse = GO(storage_path='go_mouse.db')
+go_mouse.download_annotations(species='mouse')
+go_data_mouse = ra.from_pathwaydb_go(go_mouse.storage, ontology="BP")
+
+# Zebrafish analysis
+go_zebrafish = GO(storage_path='go_zebrafish.db')
+go_zebrafish.download_annotations(species='zebrafish')
+go_data_zebrafish = ra.from_pathwaydb_go(go_zebrafish.storage, ontology="BP")
+
+# Fly (Drosophila) analysis
+go_fly = GO(storage_path='go_fly.db')
+go_fly.download_annotations(species='fly')
+go_data_fly = ra.from_pathwaydb_go(go_fly.storage, ontology="BP")
+```
+
+### Using Cached Annotations
+
+For repeated analyses, use pathwaydb's centralized cache:
+
+```python
+from pathwaydb import GO
+
+# Load from cache (auto-downloads if not cached)
+go = GO.from_cache(species='human')
+
+# Convert and analyze
+go_data = ra.from_pathwaydb_go(go.storage, ontology="BP")
+result = ra.richGO(genes, go_data, ontology="BP")
+```
+
+### Filter GO by Evidence Codes
+
+```python
+# Download with all evidence codes
+go = GO(storage_path='go_human.db')
+go.download_annotations(species='human')
+
+# Filter for experimental evidence only during conversion
+go_data = ra.from_pathwaydb_go(go.storage, ontology="BP")
+
+# Or filter using pathwaydb before conversion
+experimental = go.storage.filter(evidence_codes=['EXP', 'IDA', 'IPI', 'IMP', 'IGI', 'IEP'])
+# Then manually build DataFrame if needed
+```
+
+### pathwaydb Data Format Reference
+
+**GO columns from pathwaydb:**
+| pathwaydb | richAnn | Description |
+|-----------|---------|-------------|
+| `GeneID` | `GeneID` | Gene symbol |
+| `TERM` | `GOterm` | GO term ID (GO:0006281) |
+| `Aspect` | `Ontology` | P→BP, F→MF, C→CC |
+| `term_name` | `GOname` | Term description |
+
+**KEGG columns from pathwaydb:**
+| pathwaydb | richAnn | Description |
+|-----------|---------|-------------|
+| `GeneID` | `GeneID` | Gene symbol |
+| `PATH` | `Pathway` | Pathway ID (hsa04110) |
+| `Annot` | `PathwayName` | Pathway name |
+| `Level1` | `Level1` | Top-level category (e.g., "Metabolism") |
+| `Level2` | `Level2` | Sub-category (e.g., "Carbohydrate metabolism") |
+| `Level3` | `Level3` | Pathway name (same as PathwayName) |
+
 ## Working with EnrichResult Objects
 
 EnrichResult is the core data structure returned by all enrichment functions:
