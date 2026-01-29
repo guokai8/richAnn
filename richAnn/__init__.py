@@ -11,7 +11,7 @@ from .clustering import richCluster
 from .utils import compareResult
 from .vis import (
     ggbar, ggdot, ggnetplot, ggnetwork, ggnetmap,
-    ggheatmap, ggGSEA, comparedot
+    ggheatmap, ggGSEA, comparedot, ggcluster
 )
 from .data import (
     load_gmt, load_go_gaf, load_kegg_mapping,
@@ -42,6 +42,7 @@ __all__ = [
     'ggheatmap',
     'ggGSEA',
     'comparedot',
+    'ggcluster',
     # Data loading
     'load_gmt',
     'load_go_gaf',

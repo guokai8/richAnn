@@ -767,6 +767,654 @@ def ggGSEA(enrich_result: EnrichResult,
     return fig
 
 
+def ggcluster(data,
+              top: int = 20,
+              pvalue: float = 0.05,
+              padj: Optional[float] = None,
+              method: str = 'auto',
+              group_col: Optional[str] = None,
+              color_low: str = 'pink',
+              color_high: str = 'red',
+              color_mid: str = 'white',
+              size_range: tuple = (20, 200),
+              curve_color: str = 'grey',
+              curve_linewidth: float = 0.5,
+              vertical_line_color: str = 'darkcyan',
+              vertical_line_width: float = 1.5,
+              dot_line_color: str = 'grey',
+              dot_line_width: float = 0.3,
+              dot_line_style: str = 'dotted',
+              vline_color: str = 'grey',
+              vline_style: str = 'dashed',
+              label_fontsize: int = 8,
+              label_fontweight: str = 'bold',
+              pathway_fontsize: int = 7,
+              pathway_fontstyle: str = 'italic',
+              x_label_fontsize: int = 8,
+              figsize: tuple = (12, 10),
+              filename: Optional[str] = None,
+              dpi: int = 300,
+              **kwargs):
+    """
+    Create KEGG cluster visualization plot
+
+    This function creates a visualization showing pathways grouped by Level2 categories
+    with cluster comparisons. Supports both enrichment and GSEA modes.
+
+    Can accept either:
+    - EnrichResult from richKEGG() (requires Level2 column in KEGG annotation data)
+    - DataFrame with required columns
+
+    Parameters:
+    -----------
+    data : EnrichResult or pd.DataFrame
+        Enrichment results. For EnrichResult from richKEGG, requires Level2 column.
+        For DataFrame:
+        - Enrichment mode: 'Term', 'Level2', 'Padj', and either 'RichFactor' or
+          ('Significant'/'Count' and 'Annotated')
+        - GSEA mode: 'pathway', 'Level2', 'padj', 'NES'
+    top : int
+        Number of top terms to display (default: 20)
+    pvalue : float
+        P-value cutoff for filtering (default: 0.05)
+    padj : float, optional
+        Adjusted p-value cutoff (overrides pvalue if provided)
+    method : str
+        One of 'auto', 'enrich', or 'gsea'. If 'auto', guesses from columns.
+    group_col : str, optional
+        Column name for grouping (e.g., 'Cluster', 'Sample'). If None, uses 'group'
+        column if present, otherwise creates a single default group.
+    color_low : str
+        Color for low values in gradient (default: 'pink')
+    color_high : str
+        Color for high values in gradient (default: 'red')
+    color_mid : str
+        Color for middle values in diverging gradient for GSEA (default: 'white')
+    size_range : tuple
+        Range for dot sizes (default: (20, 200))
+    curve_color : str
+        Color for connecting curves (default: 'grey')
+    curve_linewidth : float
+        Line width for curves (default: 0.5)
+    vertical_line_color : str
+        Color for vertical lines between Level2 and terms (default: 'darkcyan')
+    vertical_line_width : float
+        Width of vertical lines (default: 1.5)
+    dot_line_color : str
+        Color for dotted lines connecting clusters to pathways (default: 'grey')
+    dot_line_width : float
+        Width of dotted lines (default: 0.3)
+    dot_line_style : str
+        Style of dotted lines (default: 'dotted')
+    vline_color : str
+        Color for vertical lines separating clusters (default: 'grey')
+    vline_style : str
+        Style for cluster separator lines (default: 'dashed')
+    label_fontsize : int
+        Font size for Level2 labels (default: 8)
+    label_fontweight : str
+        Font weight for Level2 labels (default: 'bold')
+    pathway_fontsize : int
+        Font size for pathway labels (default: 7)
+    pathway_fontstyle : str
+        Font style for pathway labels (default: 'italic')
+    x_label_fontsize : int
+        Font size for x-axis labels (default: 8)
+    figsize : tuple
+        Figure size (default: (12, 10))
+    filename : str, optional
+        Path to save the figure
+    dpi : int
+        Resolution for saved figure (default: 300)
+
+    Returns:
+    --------
+    matplotlib Figure object
+
+    Examples:
+    ---------
+    >>> # Using with richKEGG results (requires Level2 in KEGG annotation)
+    >>> kegg_result = ra.richKEGG(genes, kegg_data)
+    >>> fig = ra.ggcluster(kegg_result, top=15)
+
+    >>> # Using with DataFrame
+    >>> import pandas as pd
+    >>> data = pd.DataFrame({
+    ...     'Term': ['Peroxisome', 'PPAR signaling pathway', 'Fatty acid elongation'],
+    ...     'Level2': ['Transport and catabolism', 'Endocrine system', 'Lipid metabolism'],
+    ...     'group': ['Cluster1', 'Cluster1', 'Cluster2'],
+    ...     'Padj': [0.015, 0.04, 0.03],
+    ...     'Count': [7, 5, 3],
+    ...     'RichFactor': [2.1, 1.5, 1.8]
+    ... })
+    >>> fig = ggcluster(data)
+    """
+    from matplotlib.patches import FancyBboxPatch
+    from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+    import matplotlib.patches as mpatches
+    from matplotlib.lines import Line2D
+
+    # Handle EnrichResult input
+    if hasattr(data, 'result'):
+        df = data.result.copy()
+    else:
+        df = data.copy()
+
+    # Filter by p-value
+    if padj is not None:
+        df = df[df['Padj'] <= padj]
+    else:
+        df = df[df['Pvalue'] <= pvalue] if 'Pvalue' in df.columns else df[df['Padj'] <= pvalue]
+
+    if len(df) == 0:
+        raise ValueError("No terms remain after filtering")
+
+    # Select top terms
+    df = df.sort_values('Padj').head(top)
+
+    # Handle group column
+    if group_col is not None and group_col in df.columns:
+        # If using Cluster column with numeric values, add prefix
+        if group_col == 'Cluster' and df[group_col].dtype in ['int64', 'int32', 'float64']:
+            df['group'] = df[group_col].apply(lambda x: f'Cluster{int(x)}')
+        else:
+            df['group'] = df[group_col].astype(str)
+    elif 'group' not in df.columns:
+        if 'Cluster' in df.columns:
+            df['group'] = df['Cluster'].apply(lambda x: f'Cluster{int(x)}' if pd.notna(x) else 'Unknown')
+        elif 'Sample' in df.columns:
+            df['group'] = df['Sample'].astype(str)
+        else:
+            df['group'] = 'All'
+
+    # Check for Level2 column
+    if 'Level2' not in df.columns:
+        raise ValueError(
+            "Level2 column not found. For richKEGG results, ensure your KEGG "
+            "annotation data includes Level2 hierarchy information. "
+            "You can add it manually or use pathwaydb which provides KEGG hierarchy."
+        )
+
+    # Auto-detect method based on GSEA-specific columns (NES, ES)
+    if method == 'auto':
+        if 'NES' in df.columns or 'ES' in df.columns:
+            method = 'gsea'
+        elif 'Term' in df.columns or 'pathway' in df.columns:
+            method = 'enrich'
+        else:
+            raise ValueError("Cannot auto-detect method. Please specify method='enrich' or 'gsea'.")
+
+    if method == 'enrich':
+        return _ggcluster_enrich(
+            df, color_low=color_low, color_high=color_high,
+            size_range=size_range, curve_color=curve_color,
+            curve_linewidth=curve_linewidth,
+            vertical_line_color=vertical_line_color,
+            vertical_line_width=vertical_line_width,
+            dot_line_color=dot_line_color, dot_line_width=dot_line_width,
+            dot_line_style=dot_line_style, vline_color=vline_color,
+            vline_style=vline_style, label_fontsize=label_fontsize,
+            label_fontweight=label_fontweight,
+            pathway_fontsize=pathway_fontsize,
+            pathway_fontstyle=pathway_fontstyle,
+            x_label_fontsize=x_label_fontsize,
+            figsize=figsize, filename=filename, dpi=dpi, **kwargs
+        )
+    else:
+        return _ggcluster_gsea(
+            df, color_low=color_low, color_high=color_high,
+            color_mid=color_mid, size_range=size_range,
+            curve_color=curve_color, curve_linewidth=curve_linewidth,
+            vertical_line_color=vertical_line_color,
+            vertical_line_width=vertical_line_width,
+            dot_line_color=dot_line_color, dot_line_width=dot_line_width,
+            dot_line_style=dot_line_style, vline_color=vline_color,
+            vline_style=vline_style, label_fontsize=label_fontsize,
+            label_fontweight=label_fontweight,
+            pathway_fontsize=pathway_fontsize,
+            pathway_fontstyle=pathway_fontstyle,
+            figsize=figsize, filename=filename, dpi=dpi, **kwargs
+        )
+
+
+def _ggcluster_enrich(data: pd.DataFrame,
+                      color_low: str = 'pink',
+                      color_high: str = 'red',
+                      size_range: tuple = (20, 200),
+                      curve_color: str = 'grey',
+                      curve_linewidth: float = 0.5,
+                      vertical_line_color: str = 'darkcyan',
+                      vertical_line_width: float = 1.5,
+                      dot_line_color: str = 'grey',
+                      dot_line_width: float = 0.3,
+                      dot_line_style: str = 'dotted',
+                      vline_color: str = 'grey',
+                      vline_style: str = 'dashed',
+                      label_fontsize: int = 8,
+                      label_fontweight: str = 'bold',
+                      pathway_fontsize: int = 7,
+                      pathway_fontstyle: str = 'italic',
+                      x_label_fontsize: int = 8,
+                      figsize: tuple = (12, 10),
+                      filename: Optional[str] = None,
+                      dpi: int = 300,
+                      **kwargs):
+    """
+    Internal function for enrichment-mode cluster visualization
+    """
+    from matplotlib.colors import LinearSegmentedColormap
+    from matplotlib.lines import Line2D
+    import matplotlib.patches as mpatches
+
+    # Validate required columns - flexible to handle richKEGG output
+    required_cols = ['Term', 'Level2', 'group', 'Padj']
+    missing = [c for c in required_cols if c not in data.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    df = data.copy()
+    df['Padj'] = pd.to_numeric(df['Padj'], errors='coerce')
+    df['neg_log10_Padj'] = -np.log10(df['Padj'].clip(lower=1e-300))
+
+    # Handle RichFactor - use pre-computed if available, otherwise calculate
+    if 'RichFactor' in df.columns:
+        df['RichFactor'] = pd.to_numeric(df['RichFactor'], errors='coerce')
+    elif 'Significant' in df.columns and 'Annotated' in df.columns:
+        df['RichFactor'] = df['Significant'] / df['Annotated']
+    elif 'Count' in df.columns and 'BgRatio' in df.columns:
+        # Extract denominator from BgRatio (e.g., "50/5000" -> 5000)
+        def parse_bg_total(ratio):
+            try:
+                parts = str(ratio).split('/')
+                return int(parts[0]) if len(parts) >= 1 else 1
+            except:
+                return 1
+        bg_counts = df['BgRatio'].apply(parse_bg_total)
+        df['RichFactor'] = df['Count'] / bg_counts.clip(lower=1)
+    else:
+        # Default to using Count if nothing else available
+        if 'Count' in df.columns:
+            df['RichFactor'] = df['Count'] / df['Count'].max()
+        else:
+            df['RichFactor'] = 1.0
+            logger.warning("Could not compute RichFactor, using default value of 1.0")
+
+    # Create term ordering by Level2
+    terms = df[['Term', 'Level2']].drop_duplicates()
+    terms = terms.sort_values(['Level2', 'Term'])
+    terms['y'] = range(len(terms))
+    term_to_y = dict(zip(terms['Term'], terms['y']))
+
+    # Get Level2 label positions (mean y of terms in that Level2)
+    level2_labels = terms.groupby('Level2')['y'].agg(['mean', 'min', 'max']).reset_index()
+    level2_labels.columns = ['Level2', 'y_level2', 'y_min', 'y_max']
+
+    # Merge positions into data
+    df['y'] = df['Term'].map(term_to_y)
+    df = df.merge(level2_labels[['Level2', 'y_level2']], on='Level2', how='left')
+
+    # Get groups and their x positions
+    groups = sorted(df['group'].unique())
+    n_groups = len(groups)
+    group_x_positions = {g: 2 + i for i, g in enumerate(groups)}
+    df['x_group'] = df['group'].map(group_x_positions)
+
+    x_pathway = 2 + n_groups + 0.3
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=figsize)
+
+    y_min_global = terms['y'].min()
+    y_max_global = terms['y'].max()
+
+    # Draw curves connecting Level2 labels to their terms
+    from matplotlib.patches import FancyArrowPatch
+
+    for _, level2_row in level2_labels.iterrows():
+        level2 = level2_row['Level2']
+        y_level2 = level2_row['y_level2']
+        level2_terms = terms[terms['Level2'] == level2].copy()
+        level2_terms = level2_terms.sort_values('y')
+        n_terms = len(level2_terms)
+
+        for idx, (_, term_row) in enumerate(level2_terms.iterrows()):
+            y_term = term_row['y']
+            # Draw curve from (1, y_level2) to (1.5, y_term)
+            if n_terms == 1:
+                # Single term: straight line
+                ax.plot([1, 1.5], [y_level2, y_term],
+                       color=curve_color, linewidth=curve_linewidth)
+            else:
+                # Multiple terms: use FancyArrowPatch for curved connection
+                # Determine curvature direction based on position relative to center
+                if idx < n_terms / 2:
+                    # Upper half: curve bends upward (rad > 0)
+                    connectionstyle = f"arc3,rad=0.15"
+                else:
+                    # Lower half: curve bends downward (rad < 0)
+                    connectionstyle = f"arc3,rad=-0.15"
+
+                arrow = FancyArrowPatch(
+                    (1, y_level2), (1.5, y_term),
+                    connectionstyle=connectionstyle,
+                    arrowstyle='-',
+                    color=curve_color,
+                    linewidth=curve_linewidth,
+                    mutation_scale=1
+                )
+                ax.add_patch(arrow)
+
+    # Draw vertical lines for each Level2 group
+    for _, level2_row in level2_labels.iterrows():
+        y_min = level2_row['y_min']
+        y_max = level2_row['y_max']
+        delta = 0.1 if y_min == y_max else 0
+        ax.plot([1.5, 1.5], [y_min - delta, y_max + delta],
+               color=vertical_line_color, linewidth=vertical_line_width)
+
+    # Draw horizontal dotted lines from cluster dots to pathway labels
+    for _, row in df.drop_duplicates(['Term', 'y']).iterrows():
+        y = row['y']
+        x_start = max(group_x_positions.values())
+        ax.plot([x_start, x_pathway], [y, y],
+               color=dot_line_color, linewidth=dot_line_width,
+               linestyle=dot_line_style)
+
+    # Draw vertical dashed lines separating clusters
+    for x in group_x_positions.values():
+        ax.axvline(x=x, ymin=0, ymax=1, color=vline_color,
+                  linestyle=vline_style, linewidth=0.5, alpha=0.5)
+
+    # Add Level2 labels
+    for _, level2_row in level2_labels.iterrows():
+        ax.text(0.9, level2_row['y_level2'], level2_row['Level2'],
+               ha='right', va='center', fontsize=label_fontsize,
+               fontweight=label_fontweight)
+
+    # Plot dots with color by -log10(Padj) and size by RichFactor
+    color_values = df['neg_log10_Padj'].values
+    size_values = df['RichFactor'].values
+
+    # Handle edge case where all values are identical
+    if size_values.min() == size_values.max():
+        sizes = np.full_like(size_values, np.mean(size_range))
+    else:
+        sizes = np.interp(size_values, (size_values.min(), size_values.max()), size_range)
+
+    cmap = LinearSegmentedColormap.from_list('custom', [color_low, color_high])
+
+    if color_values.min() == color_values.max():
+        norm = plt.Normalize(vmin=color_values.min(), vmax=color_values.min() + 1)
+    else:
+        norm = plt.Normalize(vmin=color_values.min(), vmax=color_values.max())
+
+    scatter = ax.scatter(df['x_group'], df['y'],
+                        c=color_values, s=sizes,
+                        cmap=cmap, norm=norm,
+                        edgecolors='black', linewidth=0.5, alpha=0.8)
+
+    # Add pathway labels on the right
+    for _, row in terms.iterrows():
+        ax.text(x_pathway + 0.1, row['y'], row['Term'],
+               ha='left', va='center', fontsize=pathway_fontsize,
+               fontstyle=pathway_fontstyle)
+
+    # Set axis properties
+    ax.set_xlim(0, x_pathway + 2)
+    ax.set_ylim(y_min_global - 1, y_max_global + 1)
+
+    # X-axis: cluster labels
+    ax.set_xticks(list(group_x_positions.values()))
+    ax.set_xticklabels(groups, rotation=90, ha='center', fontsize=x_label_fontsize)
+
+    # Remove y-axis
+    ax.set_yticks([])
+    ax.spines['left'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+
+    # Add colorbar
+    cbar = plt.colorbar(scatter, ax=ax, fraction=0.02, pad=0.15)
+    cbar.set_label('-log10(Padj)', fontsize=10)
+
+    # Add size legend
+    size_legend_values = [size_values.min(), np.median(size_values), size_values.max()]
+    size_legend_sizes = np.interp(size_legend_values,
+                                  (size_values.min(), size_values.max()), size_range)
+
+    legend_elements = []
+    for val, size in zip(size_legend_values, size_legend_sizes):
+        legend_elements.append(
+            plt.scatter([], [], s=size, c='gray', alpha=0.6,
+                       edgecolors='black', linewidth=0.5,
+                       label=f'{val:.2f}')
+        )
+
+    ax.legend(handles=legend_elements, scatterpoints=1, frameon=True,
+             labelspacing=1.5, title='RichFactor', loc='upper right',
+             fontsize=8, bbox_to_anchor=(1.15, 1))
+
+    plt.tight_layout()
+
+    if filename:
+        plt.savefig(filename, dpi=dpi, bbox_inches='tight')
+        logger.info(f"Plot saved to {filename}")
+
+    return fig
+
+
+def _ggcluster_gsea(data: pd.DataFrame,
+                    color_low: str = 'blue',
+                    color_high: str = 'red',
+                    color_mid: str = 'white',
+                    size_range: tuple = (20, 200),
+                    curve_color: str = 'grey',
+                    curve_linewidth: float = 0.5,
+                    vertical_line_color: str = 'darkcyan',
+                    vertical_line_width: float = 1.5,
+                    dot_line_color: str = 'grey',
+                    dot_line_width: float = 0.3,
+                    dot_line_style: str = 'dotted',
+                    vline_color: str = 'grey',
+                    vline_style: str = 'dashed',
+                    label_fontsize: int = 8,
+                    label_fontweight: str = 'bold',
+                    pathway_fontsize: int = 7,
+                    pathway_fontstyle: str = 'italic',
+                    figsize: tuple = (12, 10),
+                    filename: Optional[str] = None,
+                    dpi: int = 300,
+                    **kwargs):
+    """
+    Internal function for GSEA-mode cluster visualization
+
+    Uses NES (normalized enrichment score) for coloring with diverging colormap
+    """
+    from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
+    from matplotlib.lines import Line2D
+
+    df = data.copy()
+
+    # Normalize column names - handle both richGSEA (Term, Padj) and custom (pathway, padj)
+    if 'Term' in df.columns and 'pathway' not in df.columns:
+        df['pathway'] = df['Term']
+    if 'Padj' in df.columns and 'padj' not in df.columns:
+        df['padj'] = df['Padj']
+
+    # Validate required columns
+    required_cols = ['pathway', 'Level2', 'group', 'padj', 'NES']
+    missing = [c for c in required_cols if c not in df.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {missing}")
+
+    df['padj'] = pd.to_numeric(df['padj'], errors='coerce')
+    df['NES'] = pd.to_numeric(df['NES'], errors='coerce')
+    df['neg_log10_padj'] = -np.log10(df['padj'].clip(lower=1e-300))
+
+    # Create term ordering by Level2
+    terms = df[['pathway', 'Level2']].drop_duplicates()
+    terms = terms.sort_values(['Level2', 'pathway'])
+    terms['y'] = range(len(terms))
+    term_to_y = dict(zip(terms['pathway'], terms['y']))
+
+    # Get Level2 label positions
+    level2_labels = terms.groupby('Level2')['y'].agg(['mean', 'min', 'max']).reset_index()
+    level2_labels.columns = ['Level2', 'y_level2', 'y_min', 'y_max']
+
+    # Merge positions into data
+    df['y'] = df['pathway'].map(term_to_y)
+    df = df.merge(level2_labels[['Level2', 'y_level2']], on='Level2', how='left')
+
+    # Get groups and their x positions
+    groups = sorted(df['group'].unique())
+    n_groups = len(groups)
+    group_x_positions = {g: 2 + i for i, g in enumerate(groups)}
+    df['x_group'] = df['group'].map(group_x_positions)
+
+    x_pathway = 2 + n_groups + 0.3
+
+    # Create figure
+    fig, ax = plt.subplots(figsize=figsize)
+
+    y_min_global = terms['y'].min()
+    y_max_global = terms['y'].max()
+
+    # Draw curves connecting Level2 labels to their terms
+    from matplotlib.patches import FancyArrowPatch
+
+    for _, level2_row in level2_labels.iterrows():
+        level2 = level2_row['Level2']
+        y_level2 = level2_row['y_level2']
+        level2_terms = terms[terms['Level2'] == level2].copy()
+        level2_terms = level2_terms.sort_values('y')
+        n_terms = len(level2_terms)
+
+        for idx, (_, term_row) in enumerate(level2_terms.iterrows()):
+            y_term = term_row['y']
+            if n_terms == 1:
+                ax.plot([1, 1.5], [y_level2, y_term],
+                       color=curve_color, linewidth=curve_linewidth)
+            else:
+                # Determine curvature direction based on position relative to center
+                if idx < n_terms / 2:
+                    connectionstyle = f"arc3,rad=0.15"
+                else:
+                    connectionstyle = f"arc3,rad=-0.15"
+
+                arrow = FancyArrowPatch(
+                    (1, y_level2), (1.5, y_term),
+                    connectionstyle=connectionstyle,
+                    arrowstyle='-',
+                    color=curve_color,
+                    linewidth=curve_linewidth,
+                    mutation_scale=1
+                )
+                ax.add_patch(arrow)
+
+    # Draw vertical lines for each Level2 group
+    for _, level2_row in level2_labels.iterrows():
+        y_min = level2_row['y_min']
+        y_max = level2_row['y_max']
+        delta = 0.1 if y_min == y_max else 0
+        ax.plot([1.5, 1.5], [y_min - delta, y_max + delta],
+               color=vertical_line_color, linewidth=vertical_line_width)
+
+    # Draw horizontal dotted lines
+    for _, row in df.drop_duplicates(['pathway', 'y']).iterrows():
+        y = row['y']
+        x_start = max(group_x_positions.values())
+        ax.plot([x_start, x_pathway], [y, y],
+               color=dot_line_color, linewidth=dot_line_width,
+               linestyle=dot_line_style)
+
+    # Draw vertical dashed lines separating clusters
+    for x in group_x_positions.values():
+        ax.axvline(x=x, ymin=0, ymax=1, color=vline_color,
+                  linestyle=vline_style, linewidth=0.5, alpha=0.5)
+
+    # Add Level2 labels
+    for _, level2_row in level2_labels.iterrows():
+        ax.text(0.9, level2_row['y_level2'], level2_row['Level2'],
+               ha='right', va='center', fontsize=label_fontsize,
+               fontweight=label_fontweight)
+
+    # Plot dots with diverging color by NES and size by -log10(padj)
+    color_values = df['NES'].values
+    size_values = df['neg_log10_padj'].values
+
+    if size_values.min() == size_values.max():
+        sizes = np.full_like(size_values, np.mean(size_range))
+    else:
+        sizes = np.interp(size_values, (size_values.min(), size_values.max()), size_range)
+
+    # Diverging colormap for NES (negative = blue, positive = red)
+    cmap = LinearSegmentedColormap.from_list('custom_diverging',
+                                              [color_low, color_mid, color_high])
+
+    # Center the colormap at 0
+    vmin, vmax = color_values.min(), color_values.max()
+    if vmin >= 0:
+        norm = plt.Normalize(vmin=0, vmax=vmax)
+    elif vmax <= 0:
+        norm = plt.Normalize(vmin=vmin, vmax=0)
+    else:
+        norm = TwoSlopeNorm(vmin=vmin, vcenter=0, vmax=vmax)
+
+    scatter = ax.scatter(df['x_group'], df['y'],
+                        c=color_values, s=sizes,
+                        cmap=cmap, norm=norm,
+                        edgecolors='black', linewidth=0.5, alpha=0.8)
+
+    # Add pathway labels on the right
+    for _, row in terms.iterrows():
+        ax.text(x_pathway + 0.1, row['y'], row['pathway'],
+               ha='left', va='center', fontsize=pathway_fontsize,
+               fontstyle=pathway_fontstyle)
+
+    # Set axis properties
+    ax.set_xlim(0, x_pathway + 2)
+    ax.set_ylim(y_min_global - 1, y_max_global + 1)
+
+    ax.set_xticks(list(group_x_positions.values()))
+    ax.set_xticklabels(groups, rotation=90, ha='center', fontsize=8)
+
+    ax.set_yticks([])
+    ax.spines['left'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.spines['bottom'].set_visible(False)
+
+    # Add colorbar for NES
+    cbar = plt.colorbar(scatter, ax=ax, fraction=0.02, pad=0.15)
+    cbar.set_label('NES', fontsize=10)
+
+    # Add size legend for -log10(padj)
+    size_legend_values = [size_values.min(), np.median(size_values), size_values.max()]
+    size_legend_sizes = np.interp(size_legend_values,
+                                  (size_values.min(), size_values.max()), size_range)
+
+    legend_elements = []
+    for val, size in zip(size_legend_values, size_legend_sizes):
+        legend_elements.append(
+            plt.scatter([], [], s=size, c='gray', alpha=0.6,
+                       edgecolors='black', linewidth=0.5,
+                       label=f'{val:.2f}')
+        )
+
+    ax.legend(handles=legend_elements, scatterpoints=1, frameon=True,
+             labelspacing=1.5, title='-log10(padj)', loc='upper right',
+             fontsize=8, bbox_to_anchor=(1.15, 1))
+
+    plt.tight_layout()
+
+    if filename:
+        plt.savefig(filename, dpi=dpi, bbox_inches='tight')
+        logger.info(f"Plot saved to {filename}")
+
+    return fig
+
+
 def comparedot(compare_df: pd.DataFrame,
                pvalue: float = 0.05,
                top: int = 10,
